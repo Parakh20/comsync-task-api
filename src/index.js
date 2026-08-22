@@ -40,6 +40,14 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get('/', (req, res) => {
+  res.status(200).json({
+    service: 'comsync-task-api',
+    gitSha: config.gitSha,
+    endpoints: ['/healthz', '/readyz', '/metrics', '/api/tasks'],
+  });
+});
+
 // --- Health checks ---
 // Liveness: process is up and can serve traffic (no external dependency).
 app.get('/healthz', (req, res) => {
