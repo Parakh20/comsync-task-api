@@ -1,0 +1,72 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  build-and-push:
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          build-args: |
+            GIT_SHA=${{ steps.meta.outputs.tag }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
+            ${{ env.IMAGE_NAME }}:latest
+
+  deploy:
+    needs: build-and-push
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      # Real target: SSH to the host running docker compose and run the
+      # readiness-gated deploy script, which auto-rolls-back on failure.
+      # Secrets (DEPLOY_HOST, DEPLOY_SSH_KEY, POSTGRES_PASSWORD, etc.) live
+      # in GitHub Environments, never in this repo.
+      - name: Deploy via SSH (readiness-gated, auto-rollback)
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.tag }}
+        run: |
+          echo "Would run on $DEPLOY_HOST:"
+          echo "  APP_IMAGE=$IMAGE_NAME APP_IMAGE_TAG=$IMAGE_TAG ./scripts/deploy.sh $IMAGE_TAG"
+          echo "deploy.sh polls /readyz and auto-invokes rollback.sh on failure."
