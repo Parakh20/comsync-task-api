@@ -8,6 +8,7 @@ const config = require('./config');
 const logger = require('./logger');
 const db = require('./db');
 const tasksRouter = require('./routes/tasks');
+const { landingPage } = require('./landing');
 
 const app = express();
 app.disable('x-powered-by');
@@ -41,11 +42,14 @@ app.use((req, res, next) => {
 });
 
 app.get('/', (req, res) => {
-  res.status(200).json({
-    service: 'comsync-task-api',
-    gitSha: config.gitSha,
-    endpoints: ['/healthz', '/readyz', '/metrics', '/api/tasks'],
-  });
+  if (req.accepts(['html', 'json']) === 'json') {
+    return res.status(200).json({
+      service: 'comsync-task-api',
+      gitSha: config.gitSha,
+      endpoints: ['/healthz', '/readyz', '/metrics', '/api/tasks'],
+    });
+  }
+  res.status(200).type('html').send(landingPage(config.gitSha));
 });
 
 // --- Health checks ---
