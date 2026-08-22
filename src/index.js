@@ -66,6 +66,22 @@ app.get('/metrics', async (req, res) => {
   res.end(await registry.metrics());
 });
 
+// Serverless platforms invoke this module directly without calling start(),
+// so migration must also happen lazily on first request, not only at boot.
+let migrationPromise = null;
+function ensureMigrated() {
+  if (!migrationPromise) migrationPromise = db.migrate();
+  return migrationPromise;
+}
+
+app.use('/api', async (req, res, next) => {
+  try {
+    await ensureMigrated();
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 app.use('/api', tasksRouter);
 
 // 404
@@ -84,7 +100,7 @@ let server;
 
 async function start() {
   try {
-    await db.migrate();
+    await ensureMigrated();
   } catch (err) {
     logger.error({ err }, 'startup migration failed, exiting');
     process.exit(1);
@@ -135,4 +151,9 @@ if (require.main === module) {
   start();
 }
 
-module.exports = { app, start, shutdown };
+// Export the Express app itself (callable as a request handler) so
+// serverless platforms that `require()` this file can invoke it directly;
+// start/shutdown stay available as named properties for local/container use.
+module.exports = app;
+module.exports.start = start;
+module.exports.shutdown = shutdown;
