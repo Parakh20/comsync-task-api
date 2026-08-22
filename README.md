@@ -2,6 +2,13 @@
 
 Small CRUD task API, productionized: containers, env-based config, secrets, automated deploy, health checks, logging, monitoring, graceful shutdown, restart survival, safe rollout/rollback.
 
+## Live deployment
+
+- **Endpoint**: https://comsync-gilt.vercel.app (`/healthz`, `/readyz`, `/metrics`, `/api/tasks`)
+- **Database**: Neon Postgres, provisioned via Vercel Marketplace (`vercel integration add neon`) — `DATABASE_URL` injected automatically as a project env var, never committed.
+- The primary architecture below (Docker + docker-compose + `scripts/deploy.sh`) is what's meant to be run and evaluated; the Vercel deployment is the same codebase running on Vercel's Node.js runtime (Fluid Compute) instead of a self-managed container host, so there's a real, reachable endpoint to hit. `src/index.js` exports the Express `app` directly so it works both as a long-running process (`node src/index.js`, used by the Dockerfile) and as a platform-invoked handler; DB migration runs lazily on first `/api` request when nothing calls `start()`.
+- Vercel-side rollback: `vercel rollback <deployment-url-or-id>` re-promotes a previous immutable deployment to production instantly (their equivalent of `scripts/rollback.sh` for the container path).
+
 ## Architecture
 
 ```mermaid
