@@ -1,6 +1,72 @@
 # comsync-task-api
 
+[![CI/CD](https://github.com/Parakh20/comsync-task-api/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/Parakh20/comsync-task-api/actions/workflows/ci-cd.yml)
+
 Small CRUD task API, productionized: containers, env-based config, secrets, automated deploy, health checks, logging, monitoring, graceful shutdown, restart survival, safe rollout/rollback.
+
+**Stack:** Node.js 20+, Express 4, PostgreSQL 16 (`pg`), pino logging, prom-client metrics, Docker / docker compose, GitHub Actions, GHCR.
+
+## Quick start
+
+Requires Docker with the compose plugin.
+
+```bash
+git clone https://github.com/Parakh20/comsync-task-api.git
+cd comsync-task-api
+cp .env.example .env   # set a real POSTGRES_PASSWORD (and APP_PORT if 3000 is taken)
+docker compose up -d --build
+curl localhost:3000/readyz      # {"status":"ready"} once Postgres is up
+curl -X POST localhost:3000/api/tasks -H 'content-type: application/json' -d '{"title":"ship it"}'
+curl localhost:3000/api/tasks
+docker compose down             # add -v to also drop the Postgres volume
+```
+
+## API
+
+| Method | Path | Body | Responses |
+|--------|------|------|-----------|
+| `GET` | `/` | | HTML landing page (browsers) or JSON endpoint list (`Accept: application/json`) |
+| `GET` | `/healthz` | | `200 {"status":"ok","gitSha":...}` |
+| `GET` | `/readyz` | | `200 {"status":"ready"}` or `503 {"status":"not-ready","reason":...}` |
+| `GET` | `/metrics` | | Prometheus text format |
+| `GET` | `/api/tasks` | | `200` array of up to 100 tasks, newest first |
+| `POST` | `/api/tasks` | `{"title": string}` | `201` task, `400` if title missing/blank |
+| `PATCH` | `/api/tasks/:id` | `{"done": boolean}` | `200` task, `400` bad id/body, `404` unknown id |
+| `DELETE` | `/api/tasks/:id` | | `204`, `400` bad id, `404` unknown id |
+
+A task looks like `{"id": 1, "title": "ship it", "done": false, "created_at": "2026-01-01T00:00:00.000Z"}`.
+
+## Tests
+
+```bash
+npm ci
+npm test
+```
+
+`npm test` runs Node's built-in test runner (`node --test`). Config and HTTP tests that don't need a database always run. The Postgres-backed tests (readiness and task CRUD) run only when `TEST_DATABASE_URL` is set, and are reported as skipped otherwise. To run them locally against a throwaway container:
+
+```bash
+docker run -d --rm --name comsync-testdb -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=test -p 55432:5432 postgres:16-alpine
+TEST_DATABASE_URL=postgres://test:test@127.0.0.1:55432/test npm test
+docker stop comsync-testdb
+```
+
+CI runs the full suite against a Postgres service container.
+
+## Project structure
+
+```
+src/
+  index.js        Express app: health checks, metrics, error handling, graceful shutdown
+  routes/tasks.js Task CRUD routes
+  db.js           pg pool, migration, readiness ping
+  config.js       Env-based config, fails fast without DATABASE_URL
+  logger.js       pino JSON logger
+  landing.js      HTML landing page for /
+test/             node:test suites (config, HTTP + Postgres integration)
+scripts/          deploy.sh (readiness-gated), rollback.sh, inject-failure.sh
+Dockerfile, docker-compose.yml, .github/workflows/ci-cd.yml
+```
 
 ## Live deployment
 
@@ -27,17 +93,6 @@ flowchart LR
 - **Config**: 100% via environment variables (`src/config.js`), validated at startup — missing `DATABASE_URL` fails fast instead of booting broken.
 - **Secrets**: `.env` (gitignored) locally; in CI, GitHub **Environment secrets** (`DEPLOY_HOST`, `DEPLOY_SSH_KEY`, `POSTGRES_PASSWORD`) — never committed, never baked into the image.
 
-## Run locally
-
-```bash
-cp .env.example .env   # set a real POSTGRES_PASSWORD
-docker compose up -d --build
-curl localhost:3000/healthz
-curl localhost:3000/readyz
-curl -X POST localhost:3000/api/tasks -H 'content-type: application/json' -d '{"title":"ship it"}'
-curl localhost:3000/api/tasks
-```
-
 ## Health checks
 
 - `/healthz` — liveness only (process up). No dependency calls, so a slow DB doesn't get the container killed.
@@ -58,7 +113,7 @@ curl localhost:3000/api/tasks
 
 ## CI/CD (`.github/workflows/ci-cd.yml`)
 
-1. **test** — `npm test` on every push/PR.
+1. **test** — `npm ci` + `npm test` on every push/PR, with a Postgres 16 service container so the integration tests run.
 2. **build-and-push** — builds the Docker image, tags it `ghcr.io/<repo>:<short-sha>` and `:latest`, pushes to GHCR.
 3. **deploy** — SSHes to the deploy host and runs `scripts/deploy.sh <tag>` (shown here as a dry-run echo since this environment has no live host; wire the SSH step to your actual box/VM/VPS).
 
@@ -94,3 +149,7 @@ This is the whole "detect a bad deployment" mechanism: the readiness probe is th
 - **Rollback**: see above — tag-based, readiness-gated, one command.
 - **Reducing downtime**: run two app replicas behind a proxy and do rolling restarts (one at a time, gated by `/readyz`) instead of the current single-instance restart; add a real load balancer with active health checks.
 - **Deliberately not built**: Kubernetes, service mesh, blue/green infra with a second full environment, external secret manager integration (Vault/SSM — code is ready for it, just swap where `DATABASE_URL` comes from), alerting/paging (Prometheus is scrape-ready but no Alertmanager wired), multi-region — all real overkill for a small service; added when the operational cost of not having them exceeds the cost of building them.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
